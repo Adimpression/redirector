@@ -1,0 +1,20 @@
+# Example redirector configuration file
+
+# The configuration contains a list of redirections
+redirections:
+
+  # Redirect all requests to a host ...
+  - host: example.org
+
+    # ... to a target URL
+    target: https://example.com
+
+
+  # Use hosts if you want to redirect multiple domains
+  - hosts:
+      - user.example.com
+      - users.example.com
+    target: https://example.com/users
+
+    # Set the redirection status code, the default is 302
+    status: 301

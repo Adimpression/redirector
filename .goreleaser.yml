@@ -3,3 +3,29 @@ project_name: redirector
 env:
   - CGO_ENABLED=0
   - GO111MODULE=on
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - binary: redirector
+    goos:
+      - linux
+    goarch:
+      - amd64
+
+archives:
+  - format: binary
+
+release:
+  disable: true
+
+dockers:
+  - binaries:
+      - redirector
+    image_templates:
+      - "goabout/redirector:latest"
+      - "goabout/redirector:{{ .Tag }}"
+    extra_files:
+      - etc/redirector.yaml

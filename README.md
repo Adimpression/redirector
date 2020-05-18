@@ -5,27 +5,18 @@ HTTP server that redirects requests
 
 ## Usage
 
+The easiest way to run the redirector is using Docker.
+
 Create a configuration file containing the redirections:
 
     cat <<. >redirector.yaml
     redirections:
-      - host: example.eu
+      - host: example.org
         target: https://example.com
-        status: 301
-      - hosts:
-        - user.example.com
-        - users.example.com
-        target: https://example.com/users/
     .
-    
+
+See `etc/redirector.yaml` for a documented example configuration file.
+
 Then start the redirector:
 
-    redirector --config redirector.yaml
-
-In production, it is useful to write the logs in JSON format:
-
-    redirector --config=redirector.yaml --log-format=json
-    
-Use the help function for all options:
-
-    redirector --help 
+    docker run -v $PWD/redirector.yaml:/etc/redirector.yaml:ro goabout/redirector
