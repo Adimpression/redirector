@@ -58,7 +58,7 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.Flags().StringVarP(&cfgFile, "config", "c", cfgFileDefault, "config file")
-	rootCmd.Flags().StringVarP(&addr, "addr", "l", defaultAddr, "the address and port to addr on")
+	rootCmd.Flags().StringVarP(&addr, "listen", "l", defaultAddr, "the address and port to listen on")
 	rootCmd.Flags().StringVarP(&logLevel, "log-level", "L", defaultLogLevel, "the log level: trace/debug/info/warn/error/fatal/panic")
 	rootCmd.Flags().StringVarP(&logFormat, "log-format", "F", defaultLogFormat, "the log format: color/nocolor/json")
 	rootCmd.Flags().SortFlags = false
