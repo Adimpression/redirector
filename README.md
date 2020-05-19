@@ -19,4 +19,7 @@ See `etc/redirector.yaml` for a documented example configuration file.
 
 Then start the redirector:
 
-    docker run -v $PWD/redirector.yaml:/etc/redirector.yaml:ro goabout/redirector
+    docker run \
+        -v $PWD/redirector.yaml:/etc/redirector.yaml:ro \
+        -p 8000:80 \
+        goabout/redirector
