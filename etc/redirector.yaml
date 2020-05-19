@@ -14,7 +14,10 @@ redirections:
   - hosts:
       - user.example.com
       - users.example.com
-    target: https://example.com/users
+
+    # Use path_re with target to do path substitution
+    path_re: /(.*)
+    target: https://example.com/users/$1
 
     # Set the redirection status code, the default is 302
     status: 301

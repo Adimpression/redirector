@@ -4,51 +4,44 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/justinas/alice"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/hlog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-// Program name
-const progName = "redirector"
+//
+// Command line handling
+//
 
-// Project version set by GoReleaser
-var version = "development"
+const (
+	name             = "redirector"           // Program name
+	cfgFileDefault   = "/etc/redirector.yaml" // Default configuration file path
+	addrDefault      = "127.0.0.1:8000"       // Default address and port to addr on
+	logLevelDefault  = "info"                 // Default log level
+	logFormatDefault = "color"                // Default log format
+)
 
-// The configuration file path
-var cfgFile string
-
-// The default configuration file path
-const cfgFileDefault = "/etc/redirector.yaml"
-
-// The address and port to listen on
-var addr string
-
-// The default address and port to addr on
-const defaultAddr = "127.0.0.1:8000"
-
-// The log level
-var logLevel string
-
-// The default log level
-const defaultLogLevel = "info"
-
-// The log format
-var logFormat string
-
-// The default log format
-const defaultLogFormat = "color"
+var (
+	version   = "development" // Project version, set by GoReleaser
+	cfgFile   string          // Configuration file path
+	addr      string          // Address and port to listen on
+	logLevel  string          // Log level
+	logFormat string          // Log format
+)
 
 // The root command defines the command line interface
 var rootCmd = &cobra.Command{
-	Use:     progName,
+	Use:     name,
 	Short:   "HTTP server that redirects requests.",
 	Version: version,
 	Run:     Serve,
@@ -58,9 +51,9 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.Flags().StringVarP(&cfgFile, "config", "c", cfgFileDefault, "config file")
-	rootCmd.Flags().StringVarP(&addr, "listen", "l", defaultAddr, "the address and port to listen on")
-	rootCmd.Flags().StringVarP(&logLevel, "log-level", "L", defaultLogLevel, "the log level: trace/debug/info/warn/error/fatal/panic")
-	rootCmd.Flags().StringVarP(&logFormat, "log-format", "F", defaultLogFormat, "the log format: color/nocolor/json")
+	rootCmd.Flags().StringVarP(&addr, "listen", "l", addrDefault, "the address and port to listen on")
+	rootCmd.Flags().StringVarP(&logLevel, "log-level", "L", logLevelDefault, "the log level: trace/debug/info/warn/error/fatal/panic")
+	rootCmd.Flags().StringVarP(&logFormat, "log-format", "F", logFormatDefault, "the log format: color/nocolor/json")
 	rootCmd.Flags().SortFlags = false
 }
 
@@ -73,17 +66,24 @@ func main() {
 
 // Print an error message on stderr and exit with a non-zero code
 func er(msg interface{}) {
-	_, _ = fmt.Fprintf(os.Stderr, "%v: %v\n", progName, msg)
+	_, _ = fmt.Fprintf(os.Stderr, "%v: %v\n", name, msg)
 	os.Exit(1)
 }
 
+// Print a formatted error message on stderr and exit with a non-zero code
 func erf(format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
 	er(msg)
 }
 
-var accessLog zerolog.Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
-var errorLog zerolog.Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+//
+// Configuration
+//
+
+var (
+	accessLog zerolog.Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+	errorLog  zerolog.Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+)
 
 // Initialize the configuration
 func initConfig() {
@@ -134,40 +134,37 @@ func initConfig() {
 	// Watch configuration file and fire event
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		configurationLoaded()
+		if err := loadConfiguration(); err != nil {
+			errorLog.Error().
+				Err(err).
+				Msg("Error reloading configuration")
+		}
 	})
-	configurationLoaded()
+	if err := loadConfiguration(); err != nil {
+		errorLog.Fatal().
+			Err(err).
+			Msg("Error loading configuration")
+	}
 }
 
 // The configuration
 type Config struct {
-	Redirections []Redirection `yaml:"redirs"`
+	Redirections []Redirection `yaml:"redirections"`
 }
 
 // A redirection specification
 type Redirection struct {
-	Host   string   `yaml:"host,omitempty"`
-	Hosts  []string `yaml:"hosts,omitempty"`
-	Target string   `yaml:"target"`
-	Status int      `yaml:"status,omitempty"`
+	Host      string
+	Hosts     []string
+	PathReStr string `mapstructure:"path_re"`
+	Target    string
+	Status    int
+
+	pathRe regexp.Regexp
 }
 
-// The redirection handler
-var redirectHandler = RedirectHandler{}
-
-// Called when the configuration is (re)loaded
-func configurationLoaded() {
-	var config Config
-	if err := viper.Unmarshal(&config); err == nil {
-		errorLog.Info().
-			Msgf("Configuration loaded from file: %v", viper.ConfigFileUsed())
-	} else {
-		errorLog.Error().
-			Err(err).
-			Msgf("Unable to load configuration from file: %v", viper.ConfigFileUsed())
-	}
-	redirectHandler.SetRedirections(config.Redirections)
-}
+//
+// HTTP server
 
 // Start the HTTP server
 func Serve(cmd *cobra.Command, args []string) {
@@ -176,6 +173,61 @@ func Serve(cmd *cobra.Command, args []string) {
 	handler := accessLogHandler(accessLog, &redirectHandler)
 	er(http.ListenAndServe(addr, handler))
 }
+
+// Called when the configuration is (re)loaded
+func loadConfiguration() error {
+	var config Config
+
+	// Parse configuration
+	if err := viper.UnmarshalExact(&config); err == nil {
+		errorLog.Info().
+			Msgf("Configuration loaded from file: %v", viper.ConfigFileUsed())
+	} else {
+		return errors.Wrapf(err, "Unable to load configuration from file: %v", viper.ConfigFileUsed())
+	}
+
+	// Post processing
+	for i, _ := range config.Redirections {
+		r := &config.Redirections[i]
+
+		// Collect all hosts
+		if r.Hosts == nil {
+			r.Hosts = []string{}
+		}
+		if r.Host != "" {
+			r.Hosts = append([]string{r.Host}, r.Hosts...)
+		}
+
+		// Verify that at least one host is set
+		if len(r.Hosts) == 0 {
+			return errors.New("All redirections must have hosts")
+		}
+
+		// Verify exactly target is set
+		if r.Target == "" {
+			return errors.Errorf("Target must be set: %s", strings.Join(r.Hosts, ", "))
+		}
+
+		// Compile the path regex
+		if r.PathReStr != "" {
+			if re, err := regexp.Compile(r.PathReStr); err == nil {
+				r.pathRe = *re
+			} else {
+				return errors.Wrapf(err, "Unable to parse regex: \"%s\"", re)
+			}
+		}
+	}
+
+	redirectHandler.SetRedirections(config.Redirections)
+	return nil
+}
+
+//
+// Redirection
+//
+
+// The redirection handler instance
+var redirectHandler = RedirectHandler{}
 
 // An HTTP handler that redirects requests
 type RedirectHandler struct {
@@ -186,15 +238,21 @@ type RedirectHandler struct {
 // Handle a request
 func (handler *RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	redirs := handler.redirs.Load().(map[string]Redirection)
-	if redirection, ok := redirs[r.Host]; ok {
-		status := redirection.Status
+	if redir, ok := redirs[r.Host]; ok {
+		status := redir.Status
 		if status == 0 {
 			status = http.StatusFound
 		}
-		http.Redirect(w, r, redirection.Target, status)
+		var target string
+		if redir.PathReStr != "" {
+			target = redir.pathRe.ReplaceAllString(r.RequestURI, redir.Target)
+		} else {
+			target = redir.Target
+		}
+		http.Redirect(w, r, target, status)
 	} else {
 		w.WriteHeader(http.StatusNotFound)
-		if _, err := fmt.Fprint(w, "Not found\n"); err != nil {
+		if _, err := fmt.Fprint(w, "Not found.\n"); err != nil {
 			errorLog.Err(err).
 				Send()
 		}
@@ -205,9 +263,6 @@ func (handler *RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 func (handler *RedirectHandler) SetRedirections(redirections []Redirection) {
 	redirs := make(map[string]Redirection)
 	for _, r := range redirections {
-		if r.Host != "" {
-			redirs[r.Host] = r
-		}
 		for _, h := range r.Hosts {
 			redirs[h] = r
 		}
