@@ -23,3 +23,7 @@ Then start the redirector:
         -v $PWD/redirector.yaml:/etc/redirector.yaml:ro \
         -p 8000:80 \
         goabout/redirector
+
+To test:
+
+    curl localhost:8000 -Hhost:example.org
